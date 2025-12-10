@@ -1,42 +1,64 @@
 const express = require('express');
 const cors = require('cors');
-const app = express();
+const mysql = require('mysql2/promise');
+require('dotenv').config();
 
-// PENTING: Railway akan menyuntikkan PORT secara otomatis
+const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors()); // Agar bisa diakses dari HP/Web lain
+app.use(cors());
 app.use(express.json());
 
-// 1. Route Cek Server (Health Check)
-app.get('/', (req, res) => {
-  res.json({ 
-    status: "Active", 
-    message: "Server Backend Live di Railway! 🚀" 
-  });
+// KONEKSI DATABASE (Mengambil Password otomatis dari Railway)
+const pool = mysql.createPool({
+    host: process.env.MYSQLHOST || 'localhost',
+    user: process.env.MYSQLUSER || 'root',
+    password: process.env.MYSQLPASSWORD || '',
+    database: process.env.MYSQLDATABASE || 'railway',
+    port: process.env.MYSQLPORT || 3306,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
 });
 
-// 2. Route Dummy Login (Untuk testing Flutter)
-app.post('/api/login', (req, res) => {
-  const { email, password } = req.body;
-  
-  // Simulasi logic login
-  if(email === "test@admin.com" && password === "123") {
-    res.json({
-      success: true,
-      message: "Login Berhasil!",
-      user: { id: 1, name: "Admin Ganteng" }
-    });
-  } else {
-    res.status(401).json({
-      success: false,
-      message: "Email atau Password Salah"
-    });
-  }
+// Route Cek Server
+app.get('/', async (req, res) => {
+    try {
+        const connection = await pool.getConnection();
+        connection.release();
+        res.json({ status: "Active", db: "Connected 🟢" });
+    } catch (err) {
+        res.json({ status: "Active", db: "Error 🔴", error: err.message });
+    }
 });
 
-// Jalankan Server
+// Route LOGIN (Pakai Database Asli)
+app.post('/api/login', async (req, res) => {
+    const { email, password } = req.body;
+    try {
+        // Cari user berdasarkan email
+        const [rows] = await pool.execute('SELECT * FROM users WHERE email = ?', [email]);
+        
+        if (rows.length === 0) {
+            return res.status(401).json({ success: false, message: "Email tidak ditemukan" });
+        }
+
+        const user = rows[0];
+        // Cek password (sederhana)
+        if (password === user.password) {
+            res.json({
+                success: true,
+                message: "Login Berhasil",
+                data: { id: user.id, name: user.name, email: user.email }
+            });
+        } else {
+            res.status(401).json({ success: false, message: "Password Salah" });
+        }
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Server Error: " + error.message });
+    }
+});
+
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
